@@ -1,8 +1,9 @@
-/*
- * Vencord, a Discord client mod
- * Copyright (c) 2025 Windsurf and contributors
- * SPDX-License-Identifier: GPL-3.0-or-later
- */
+export const pluginInfo = {
+    id: "urlBar",
+    name: "URL Bar",
+    description: "Adds a full navigation bar to Discord with URL input, history, and navigation controls",
+    color: "#7289da"
+};
 
 import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType } from "@utils/types";
@@ -55,12 +56,10 @@ const settings = definePluginSettings({
 
 import { Logger } from "@utils/Logger";
 
-const pluginId = "urlBar";
-const pluginName = "URL Bar";
-const logger = new Logger(pluginName, "#7289da");
+const logger = new Logger(pluginInfo.name, pluginInfo.color);
 
 export default definePlugin({
-    name: pluginName,
+    name: "URL Bar",
     description: "Adds a full navigation bar to Discord with URL input, history, and navigation controls",
     authors: [
         { name: "Windsurf", id: 0n },
