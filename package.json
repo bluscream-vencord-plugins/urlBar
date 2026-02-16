@@ -3,5 +3,17 @@
   "version": "1.0.0",
   "description": "Adds a full navigation bar to Discord with URL input, history, and navigation controls",
   "main": "index.tsx",
-  "type": "module"
+  "author": {
+    "name": "Bluscream",
+    "url": "https://github.com/Bluscream"
+  },
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bluscream-vencord-plugins/urlBar.git"
+  },
+  "vencord": {
+    "plugin": true,
+    "userPlugin": true
+  }
 }

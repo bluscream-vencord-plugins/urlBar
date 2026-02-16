@@ -1,15 +1,30 @@
-export const pluginInfo = {
-    id: "urlBar",
-    name: "URL Bar",
-    description: "Adds a full navigation bar to Discord with URL input, history, and navigation controls",
-    color: "#7289da"
-};
-
-import { definePluginSettings } from "@api/Settings";
-import definePlugin, { OptionType } from "@utils/types";
+//// Plugin originally written for Equicord at 2026-02-16 by https://github.com/Bluscream, https://antigravity.google
+// region Imports
+import definePlugin from "@utils/types";
 import { findStoreLazy } from "@webpack";
 import { FluxDispatcher, React, useEffect, useRef, useState } from "@webpack/common";
 import type { ReactNode } from "react";
+import { Logger } from "@utils/Logger";
+
+import { settings } from "./settings";
+// endregion Imports
+
+// region PluginInfo
+export const pluginInfo = {
+    id: "urlBar",
+    name: "UrlBar",
+    description: "Adds a full navigation bar to Discord with URL input, history, and navigation controls",
+    color: "#7289da",
+    authors: [
+        { name: "Windsurf", id: 0n },
+        { name: "Bluscream", id: 467777925790564352n },
+        { name: "Assistant", id: 0n }
+    ],
+};
+// endregion PluginInfo
+
+// region Variables
+const logger = new Logger(pluginInfo.id, pluginInfo.color);
 
 const NavigationStore = findStoreLazy("NavigationStore");
 const SelectedChannelStore = findStoreLazy("SelectedChannelStore");
@@ -20,57 +35,97 @@ interface NavHistory {
     title: string;
     timestamp: number;
 }
+// endregion Variables
 
-const settings = definePluginSettings({
-    position: {
-        type: OptionType.SELECT,
-        description: "Position of the navigation bar",
-        options: [
-            { label: "Top", value: "top", default: true },
-            { label: "Bottom", value: "bottom" },
-            { label: "Floating", value: "floating" }
-        ]
-    },
-    showHistory: {
-        type: OptionType.BOOLEAN,
-        description: "Show navigation history buttons",
-        default: true
-    },
-    showRefresh: {
-        type: OptionType.BOOLEAN,
-        description: "Show refresh button",
-        default: true
-    },
-    showHome: {
-        type: OptionType.BOOLEAN,
-        description: "Show home button",
-        default: true
-    },
-    maxHeight: {
-        type: OptionType.SLIDER,
-        description: "Maximum height of the navigation bar",
-        default: 40,
-        markers: [30, 40, 50, 60]
+// region Utils
+function getCurrentDiscordUrl() {
+    try {
+        const { getGuildId, getVoiceChannelId, getChannelId } = SelectedChannelStore;
+        const guildId = getGuildId();
+        const channelId = getVoiceChannelId() || getChannelId();
+
+        if (channelId) {
+            const guild = GuildStore.getGuild(guildId);
+            const channel = SelectedChannelStore.getChannel(channelId);
+
+            if (guild && channel) {
+                return `https://discord.com/channels/${guildId}/${channelId}`;
+            }
+        }
+
+        if (guildId) {
+            return `https://discord.com/channels/${guildId}`;
+        }
+
+        return "https://discord.com/@me";
+    } catch (error) {
+        return "https://discord.com";
     }
-});
+}
 
-import { Logger } from "@utils/Logger";
+function getPageTitle(url: string) {
+    try {
+        const urlObj = new URL(url);
+        const pathParts = urlObj.pathname.split("/").filter(Boolean);
 
-const logger = new Logger(pluginInfo.name, pluginInfo.color);
+        if (pathParts[0] === "channels") {
+            const guildId = pathParts[1];
+            const channelId = pathParts[2];
 
-export default definePlugin({
-    name: "URL Bar",
-    description: "Adds a full navigation bar to Discord with URL input, history, and navigation controls",
-    authors: [
-        { name: "Windsurf", id: 0n },
-        { name: "Bluscream", id: 467777925790564352n }
-    ],
-    settings,
+            if (guildId && channelId) {
+                const guild = GuildStore.getGuild(guildId);
+                const channel = SelectedChannelStore.getChannel(channelId);
+                return `${guild?.name || "Unknown Server"} - ${channel?.name || "Unknown Channel"}`;
+            } else if (guildId) {
+                const guild = GuildStore.getGuild(guildId);
+                return guild?.name || "Unknown Server";
+            }
+        }
 
-    render() {
-        return <URLBar />;
+        if (pathParts[0] === "@me") {
+            return "Direct Messages";
+        }
+
+        return "Discord";
+    } catch (error) {
+        return "Discord";
     }
-});
+}
+// endregion Utils
+
+// region Components
+function NavButton({ onClick, disabled, title, children }: {
+    onClick: () => void;
+    disabled?: boolean;
+    title: string;
+    children: ReactNode;
+}) {
+    return (
+        <button
+            onClick={onClick}
+            disabled={disabled}
+            title={title}
+            style={{
+                backgroundColor: disabled ? "#202225" : "#40444b",
+                border: "1px solid #202225",
+                borderRadius: "4px",
+                color: disabled ? "#72767d" : "#dcddde",
+                cursor: disabled ? "not-allowed" : "pointer",
+                fontSize: "16px",
+                width: "32px",
+                height: "32px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "background-color 0.2s"
+            }}
+            onMouseEnter={e => !disabled && (e.currentTarget.style.backgroundColor = "#4f545c")}
+            onMouseLeave={e => !disabled && (e.currentTarget.style.backgroundColor = "#40444b")}
+        >
+            {children}
+        </button>
+    );
+}
 
 function URLBar() {
     const [currentUrl, setCurrentUrl] = useState("");
@@ -80,16 +135,24 @@ function URLBar() {
     const [showSuggestions, setShowSuggestions] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
 
-    // Initialize current URL
+    const updateCurrentUrl = () => {
+        const url = getCurrentDiscordUrl();
+        setCurrentUrl(url);
+
+        if (history.length === 0 || history[history.length - 1]?.url !== url) {
+            const newHistory = [...history.slice(-49), { url, title: getPageTitle(url), timestamp: Date.now() }];
+            setHistory(newHistory);
+            setHistoryIndex(newHistory.length - 1);
+        }
+    };
+
     useEffect(() => {
         updateCurrentUrl();
 
-        // Listen for navigation changes
         const handleNavigation = () => {
             updateCurrentUrl();
         };
 
-        // Subscribe to Discord navigation events
         FluxDispatcher.subscribe("TRANSITION_START", handleNavigation);
         FluxDispatcher.subscribe("CHANNEL_SELECT", handleNavigation);
         FluxDispatcher.subscribe("GUILD_SELECT", handleNavigation);
@@ -100,72 +163,6 @@ function URLBar() {
             FluxDispatcher.unsubscribe("GUILD_SELECT", handleNavigation);
         };
     }, []);
-
-    const updateCurrentUrl = () => {
-        const url = getCurrentDiscordUrl();
-        setCurrentUrl(url);
-
-        // Add to history if different from last
-        if (history.length === 0 || history[history.length - 1]?.url !== url) {
-            const newHistory = [...history.slice(-49), { url, title: getPageTitle(url), timestamp: Date.now() }];
-            setHistory(newHistory);
-            setHistoryIndex(newHistory.length - 1);
-        }
-    };
-
-    const getCurrentDiscordUrl = () => {
-        try {
-            const { getGuildId, getVoiceChannelId, getChannelId } = SelectedChannelStore;
-            const guildId = getGuildId();
-            const channelId = getVoiceChannelId() || getChannelId();
-
-            if (channelId) {
-                const guild = GuildStore.getGuild(guildId);
-                const channel = SelectedChannelStore.getChannel(channelId);
-
-                if (guild && channel) {
-                    return `https://discord.com/channels/${guildId}/${channelId}`;
-                }
-            }
-
-            if (guildId) {
-                return `https://discord.com/channels/${guildId}`;
-            }
-
-            return "https://discord.com/@me";
-        } catch (error) {
-            return "https://discord.com";
-        }
-    };
-
-    const getPageTitle = (url: string) => {
-        try {
-            const urlObj = new URL(url);
-            const pathParts = urlObj.pathname.split("/").filter(Boolean);
-
-            if (pathParts[0] === "channels") {
-                const guildId = pathParts[1];
-                const channelId = pathParts[2];
-
-                if (guildId && channelId) {
-                    const guild = GuildStore.getGuild(guildId);
-                    const channel = SelectedChannelStore.getChannel(channelId);
-                    return `${guild?.name || "Unknown Server"} - ${channel?.name || "Unknown Channel"}`;
-                } else if (guildId) {
-                    const guild = GuildStore.getGuild(guildId);
-                    return guild?.name || "Unknown Server";
-                }
-            }
-
-            if (pathParts[0] === "@me") {
-                return "Direct Messages";
-            }
-
-            return "Discord";
-        } catch (error) {
-            return "Discord";
-        }
-    };
 
     const navigateToUrl = (url: string) => {
         try {
@@ -179,22 +176,12 @@ function URLBar() {
                     const channelId = pathParts[2];
 
                     if (guildId && channelId) {
-                        FluxDispatcher.dispatch({
-                            type: "CHANNEL_SELECT",
-                            guildId,
-                            channelId
-                        });
+                        FluxDispatcher.dispatch({ type: "CHANNEL_SELECT", guildId, channelId });
                     } else if (guildId) {
-                        FluxDispatcher.dispatch({
-                            type: "GUILD_SELECT",
-                            guildId
-                        });
+                        FluxDispatcher.dispatch({ type: "GUILD_SELECT", guildId });
                     }
                 } else if (pathParts[0] === "@me") {
-                    FluxDispatcher.dispatch({
-                        type: "CHANNEL_SELECT",
-                        guildId: null
-                    });
+                    FluxDispatcher.dispatch({ type: "CHANNEL_SELECT", guildId: null });
                 }
 
                 setCurrentUrl(url);
@@ -224,7 +211,6 @@ function URLBar() {
     };
 
     const refresh = () => {
-        // Force refresh current view
         window.location.reload();
     };
 
@@ -232,14 +218,13 @@ function URLBar() {
         navigateToUrl("https://discord.com/@me");
     };
 
-    const handleInputChange = value => {
+    const handleInputChange = (value: string) => {
         setCurrentUrl(value);
 
-        // Generate suggestions
         if (value.length > 0) {
             const filteredHistory = history
                 .filter(item => item.url.toLowerCase().includes(value.toLowerCase()) ||
-                               item.title.toLowerCase().includes(value.toLowerCase()))
+                    item.title.toLowerCase().includes(value.toLowerCase()))
                 .slice(0, 5)
                 .map(item => item.url);
 
@@ -258,7 +243,7 @@ function URLBar() {
         }
     };
 
-    const handleInputKeyDown = e => {
+    const handleInputKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === "Enter") {
             navigateToUrl(currentUrl);
         } else if (e.key === "Escape") {
@@ -266,8 +251,7 @@ function URLBar() {
         }
     };
 
-    const { position } = settings.store;
-    const { maxHeight } = settings.store;
+    const { position, maxHeight } = settings.store;
 
     const barStyle: React.CSSProperties = {
         position: position === "floating" ? "fixed" : "relative",
@@ -291,37 +275,20 @@ function URLBar() {
 
     return (
         <div style={barStyle}>
-            {/* Navigation Buttons */}
             {settings.store.showHistory && (
                 <>
-                    <NavButton onClick={goBack} disabled={historyIndex <= 0} title="Back">
-                        ←
-                    </NavButton>
-                    <NavButton onClick={goForward} disabled={historyIndex >= history.length - 1} title="Forward">
-                        →
-                    </NavButton>
+                    <NavButton onClick={goBack} disabled={historyIndex <= 0} title="Back">←</NavButton>
+                    <NavButton onClick={goForward} disabled={historyIndex >= history.length - 1} title="Forward">→</NavButton>
                 </>
             )}
-
-            {settings.store.showRefresh && (
-                <NavButton onClick={refresh} title="Refresh">
-                    ↻
-                </NavButton>
-            )}
-
-            {settings.store.showHome && (
-                <NavButton onClick={goHome} title="Home">
-                    🏠
-                </NavButton>
-            )}
-
-            {/* URL Input */}
+            {settings.store.showRefresh && <NavButton onClick={refresh} title="Refresh">↻</NavButton>}
+            {settings.store.showHome && <NavButton onClick={goHome} title="Home">🏠</NavButton>}
             <div style={{ flex: 1, position: "relative" }}>
                 <input
                     ref={inputRef}
                     type="text"
                     value={currentUrl}
-                onChange={e => handleInputChange(e.target.value)}
+                    onChange={e => handleInputChange(e.target.value)}
                     onKeyDown={handleInputKeyDown}
                     onFocus={() => setShowSuggestions(suggestions.length > 0)}
                     onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
@@ -338,8 +305,6 @@ function URLBar() {
                         outline: "none"
                     }}
                 />
-
-                {/* Suggestions Dropdown */}
                 {showSuggestions && suggestions.length > 0 && (
                     <div style={{
                         position: "absolute",
@@ -379,36 +344,16 @@ function URLBar() {
         </div>
     );
 }
+// endregion Components
 
-function NavButton({ onClick, disabled, title, children }: {
-    onClick: () => void;
-    disabled?: boolean;
-    title: string;
-    children: ReactNode;
-}) {
-    return (
-        <button
-            onClick={onClick}
-            disabled={disabled}
-            title={title}
-            style={{
-                backgroundColor: disabled ? "#202225" : "#40444b",
-                border: "1px solid #202225",
-                borderRadius: "4px",
-                color: disabled ? "#72767d" : "#dcddde",
-                cursor: disabled ? "not-allowed" : "pointer",
-                fontSize: "16px",
-                width: "32px",
-                height: "32px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                transition: "background-color 0.2s"
-            }}
-            onMouseEnter={e => !disabled && (e.currentTarget.style.backgroundColor = "#4f545c")}
-            onMouseLeave={e => !disabled && (e.currentTarget.style.backgroundColor = "#40444b")}
-        >
-            {children}
-        </button>
-    );
-}
+// region Definition
+export default definePlugin({
+    name: pluginInfo.name,
+    description: pluginInfo.description,
+    authors: pluginInfo.authors,
+    settings,
+    render() {
+        return <URLBar />;
+    }
+});
+// endregion Definition
